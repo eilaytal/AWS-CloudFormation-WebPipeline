@@ -1,0 +1,519 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS comm Infrastructure with VPC Endpoints, including route tables
+
+Parameters:  # Parameters section for customizable values
+  DBUsername:  # Parameter for database username
+    Type: String
+    Default: admin
+    Description: Username for the database
+    NoEcho: true
+
+  Version:  # Parameter for the application version
+    Type: String
+    Default: V1.0
+    Description: Version of the app
+    NoEcho: true
+
+  HostedZone:  # Parameter for the hosted zone name in AWS Route 53
+    Type: String
+    Default: eilay.click.
+    Description: Name of the hostedZone in AWS Route 53
+    NoEcho: true
+
+  RecordName:  # Parameter for the DNS record name
+    Type: String
+    Default: comm.eilay.click.
+    Description: Name of the Route 53 record
+    NoEcho: true
+
+  FrontEndImageRepo:  # Parameter for the repository of the FrontEnd image
+    Type: String
+    Default: 767397848009.dkr.ecr.eu-north-1.amazonaws.com/comm_frontend
+    Description: Repository of the FrontEnd image
+    NoEcho: true
+
+  BackEndImageRepo:  # Parameter for the repository of the BackEnd image
+    Type: String
+    Default: 767397848009.dkr.ecr.eu-north-1.amazonaws.com/comm_backend
+    Description: Repository of the BackEnd image
+    NoEcho: true
+
+  TLScertificationARN:  # Parameter for the ARN of the ACM certificate
+    Type: String
+    Default: arn:aws:acm:eu-north-1:767397848009:certificate/885c7390-8d6c-4c0f-82d6-ee044b36a136
+    Description: ARN of the Certificate from ACM
+    NoEcho: true
+
+  InstanceAMI:  # Parameter for the AMI of the Amazon Linux image
+    Type: String
+    Default: ami-0d74f1e79c38f2933
+    Description: AMI of the Amazon Linux 2023 image in your region
+    NoEcho: true
+
+
+Resources:
+  #----------------------------------------------------------------VPC--------------------------------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Comm
+
+  # Subnets
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PublicSubnetOne
+
+  PublicSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PublicSubnetTwo
+
+  PrivateSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnetOne
+
+  PrivateSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnetTwo
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: InternetGateway
+
+  # Attachment of Internet Gateway to VPC
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+  # Public Route
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Associations of Public Subnets with Public Route Table
+  PublicSubnetRouteTableAssociationOne:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociationTwo:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetTwo
+      RouteTableId: !Ref PublicRouteTable
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable
+
+  # Association of Private Subnets with Private Route Table
+  PrivateSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetOne
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetTwo
+      RouteTableId: !Ref PrivateRouteTable
+
+  # NAT Gateway Elastic IP
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  # NAT Gateway
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnetOne
+      Tags:
+        - Key: Name
+          Value: NATGateway
+
+  # Route for Private Subnets to NAT Gateway
+  PrivateRouteToNATGateway:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  #----------------------------------------------------------------RDS--------------------------------------------------------------------------
+
+  # Security Group for RDS
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.3.0/24
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.4.0/24
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+
+  # RDS DB Instance
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: mysql
+      DBName: Comm
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:password}}' ]]
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt RDSSecurityGroup.GroupId
+
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref PrivateSubnetOne
+        - !Ref PrivateSubnetTwo
+
+  # Secret for RDS credentials
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}-DBSecret"
+      Description: Secret for RDS credentials
+      GenerateSecretString:
+        SecretStringTemplate: !Sub |
+          {
+            "username": "${DBUsername}"}
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludePunctuation: true
+        IncludeSpace: false
+
+  # Attachment of RDS Secret to RDS Instance
+  DBSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DBSecret
+      TargetId: !Ref DBInstance
+      TargetType: AWS::RDS::DBInstance
+
+  #----------------------------------------------------------------ECS & EC2--------------------------------------------------------------------------
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: CommApp
+
+  # IAM Role for ECS Instance
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EC2ContainerService
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:*
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:ListSecrets
+                Resource: '*'
+
+  # IAM Instance Profile for ECS Instance
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # Security Group for EC2 Instances
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow access to ECS containers
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !GetAtt ALBSecurityGroup.GroupId
+
+  # Launch Configuration for EC2 Instances
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref InstanceAMI
+      InstanceType: t3.micro
+      KeyName: aviad_key
+      SecurityGroups:
+        - !Ref EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y ecs-init
+          service docker start
+          mkdir /etc/ecs/
+          echo "ECS_CLUSTER=CommApp" >> /etc/ecs/ecs.config
+          systemctl enable ecs
+          reboot
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: '8'
+            VolumeType: gp2
+
+  # Auto Scaling Group
+  AutoScalingGroup:
+    DependsOn:
+      - ECSCluster
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnetOne
+        - !Ref PrivateSubnetTwo
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      MinSize: '4'
+      MaxSize: '4'
+      DesiredCapacity: '4'
+      Tags:
+        - Key: Name
+          Value: EC2Container
+          PropagateAtLaunch: 'true'
+      HealthCheckGracePeriod: 300
+
+  # Target Group for ECS Instances
+  ECSInstanceTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: "/"
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 3
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      UnhealthyThresholdCount: 3
+      VpcId: !Ref VPC
+
+  # Scaling Policy for Auto Scaling Group
+  ScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50.0
+
+  # Task Definition for ECS Service
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: comm-task-definition
+      NetworkMode: bridge
+      ContainerDefinitions:
+        - Name: Backend
+          Image: !Sub '${BackEndImageRepo}:${Version}'
+          Memory: 512
+          Cpu: 128
+          PortMappings:
+            - ContainerPort: 5000
+              HostPort: 5000
+          Environment:
+            - Name: SECRET_KEY
+              Value: !Ref DBSecret
+        - Name: Frontend
+          Image: !Sub '${FrontEndImageRepo}:${Version}'
+          Memory: 128
+          Cpu: 128
+          PortMappings:
+            - ContainerPort: 80
+              HostPort: 80
+          Links:
+            - Backend
+
+  # ECS Service
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - Listener
+      - DBInstance
+    Properties:
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 4
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+      LaunchType: EC2
+      LoadBalancers:
+        - ContainerName: Frontend
+          ContainerPort: 80
+          TargetGroupArn: !Ref ECSInstanceTargetGroup
+
+  #----------------------------------------------------------------ALB--------------------------------------------------------------------------
+
+  # Security Group for ALB
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  # Application Load Balancer
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - !Ref PublicSubnetOne
+        - !Ref PublicSubnetTwo
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "60"
+
+  # Listener for ALB
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ECSInstanceTargetGroup
+      LoadBalancerArn: !Ref ALB
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref TLScertificationARN
+
+  # Listener Rule for ALB
+  ListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: 'text/plain'
+            MessageBody: 'Forbidden'
+      Conditions:
+        - Field: host-header
+          Values:
+            - !GetAtt 'ALB.DNSName'
+      ListenerArn: !Ref Listener
+      Priority: 1
+
+  #----------------------------------------------------------------Route 53--------------------------------------------------------------------------
+
+  # DNS Record Set for ALB
+  DNS:
+    DependsOn: ALB
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Ref HostedZone
+      Comment: Zone apex alias targeted to ELB LoadBalancer.
+      Name: !Ref RecordName
+      Type: A
+      AliasTarget:
+        HostedZoneId: !GetAtt 'ALB.CanonicalHostedZoneID'
+        DNSName: !GetAtt 'ALB.DNSName'

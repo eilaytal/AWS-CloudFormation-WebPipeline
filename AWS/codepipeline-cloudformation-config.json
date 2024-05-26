@@ -1,0 +1,9 @@
+{
+  "Parameters" : {
+    "BranchName" : "<branch name to trigger the pipeline>",
+    "Repository" : "<specify the repository>",
+    "BuildProject" : "<name for the build project>",
+    "StackName" : "<name for the stack>",
+    "BuildSpecPath" : "<path to the buildspec from with in the repository>"
+  }
+}

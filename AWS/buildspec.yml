@@ -1,0 +1,42 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      # Log in to Amazon ECR to authenticate Docker client
+      - echo Logging in to Amazon ECR....
+      - aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin 767397848009.dkr.ecr.eu-north-1.amazonaws.com
+      # Set the build number
+      - BUILD_NUMBER=$CODEBUILD_BUILD_NUMBER
+      # Execute versioning script to update version numbers
+      - ./Scripts/version.sh $BUILD_NUMBER
+
+  build:
+    commands:
+      # Build the Docker image for backend
+      - echo Building the Docker image for backend...
+      - docker build -t comm_backend ./Backend
+      # Tag the backend Docker image
+      - docker tag comm_backend:latest 767397848009.dkr.ecr.eu-north-1.amazonaws.com/comm_backend:V1.$BUILD_NUMBER
+      # Build the Docker image for frontend
+      - echo Building the Docker image for frontend...
+      - docker build -t comm_frontend ./Frontend
+      # Tag the frontend Docker image
+      - docker tag comm_frontend:latest 767397848009.dkr.ecr.eu-north-1.amazonaws.com/comm_frontend:V1.$BUILD_NUMBER
+
+  post_build:
+    commands:
+      # Push the backend Docker image to ECR
+      - echo Pushing the backend Docker image to ECR...
+      - docker push 767397848009.dkr.ecr.eu-north-1.amazonaws.com/comm_backend:V1.$BUILD_NUMBER
+      # Push the frontend Docker image to ECR
+      - echo Pushing the frontend Docker image to ECR...
+      - docker push 767397848009.dkr.ecr.eu-north-1.amazonaws.com/comm_frontend:V1.$BUILD_NUMBER
+
+artifacts:
+  files:
+    # Specify CloudFormation templates to be included in the build artifact
+    - ./AWS/cloudformation.yml
+    - ./AWS/cloudformation-config.json
+  # Discard unnecessary paths from the artifact
+  discard-paths: yes

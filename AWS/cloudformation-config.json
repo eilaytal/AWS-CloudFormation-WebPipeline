@@ -1,0 +1,12 @@
+{
+  "Parameters" : {
+    "DBUsername" : "admin",
+    "Version" : "V1.0",
+    "HostedZone" : "eilay.click.",
+    "RecordName" : "comm.eilay.click.",
+    "FrontEndImageRepo" : "767397848009.dkr.ecr.eu-north-1.amazonaws.com/comm_frontend",
+    "BackEndImageRepo" : "767397848009.dkr.ecr.eu-north-1.amazonaws.com/comm_backend",
+    "TLScertificationARN" : "arn:aws:acm:eu-north-1:767397848009:certificate/885c7390-8d6c-4c0f-82d6-ee044b36a136",
+    "InstanceAMI" : "ami-0d74f1e79c38f2933"
+  }
+}

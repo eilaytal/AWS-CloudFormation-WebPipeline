@@ -1,0 +1,276 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# Parameters for the CloudFormation template
+Parameters:
+  # BranchName parameter specifies the branch in the CodeCommit repository to trigger the pipeline
+  BranchName:
+    Type: String
+    Default: master
+    Description: The branch in the CodeCommit repository to trigger the pipeline
+
+  # Repository parameter specifies the repository name where the source code is located
+  Repository:
+    Type: String
+    Default: comm
+    Description: The repository name the source code is located at
+
+  # BuildProject parameter specifies the name of the CodeBuild project
+  BuildProject:
+    Type: String
+    Default: comm
+    Description: The name of the build project
+
+  # StackName parameter specifies the name of the CloudFormation stack the pipeline will create
+  StackName:
+    Type: String
+    Default: Comm
+    Description: Name of the stack the pipeline will create
+
+  # BuildSpecPath parameter specifies the path to the buildspec file
+  BuildSpecPath:
+    Type: String
+    Default: AWS/buildspec.yml
+    Description: Path to the buildspec file
+
+# Resources defined in the CloudFormation template
+Resources:
+  # Pipeline resource to define the AWS CodePipeline
+  MyPipeline:
+    DependsOn:
+      - CodeBuildProject
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: comm-app
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineArtifactBucket
+      PipelineType: V2
+      Stages:
+        # Source stage to fetch the source code from CodeCommit
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: '1'
+                Provider: CodeCommit
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                RepositoryName: !Ref Repository
+                BranchName: !Ref BranchName
+              RunOrder: 1
+        # Build stage to build the source code using CodeBuild
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref BuildProject
+              RunOrder: 1
+        # Deploy stage to deploy the built artifacts using CloudFormation
+        - Name: Deploy
+          Actions:
+            - Name: DeployAction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: '1'
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Ref StackName
+                RoleArn: !GetAtt CloudFormationRole.Arn
+                TemplatePath: BuildOutput::cloudformation.yml
+                TemplateConfiguration: BuildOutput::cloudformation-config.json
+                Capabilities: CAPABILITY_IAM
+              RunOrder: 1
+
+  # S3 bucket to store pipeline artifacts
+  PipelineArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: comm-pipeline-artifact-bucket
+      AccessControl: Private
+      VersioningConfiguration:
+        Status: Enabled
+
+  # IAM role for the pipeline
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                  - s3:PutObject
+                Resource:
+                  - !GetAtt PipelineArtifactBucket.Arn
+                  - !Sub "${PipelineArtifactBucket.Arn}/*"
+              # Permissions for CodeCommit actions
+              - Effect: Allow
+                Action:
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:GetRepository
+                  - codecommit:GetUploadArchive
+                  - codecommit:CancelUploadArchive
+                  - codecommit:UploadArchive
+                  - codecommit:GetUploadArchiveStatus
+                Resource: "*"
+              # Permissions for CloudFormation actions
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:UpdateStack
+                Resource: "*"
+              # Permissions for CodeBuild actions
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: "*"
+              # Permission for IAM actions
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationRole.Arn
+
+  # CodeBuild project to build the source code
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref BuildProject
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Ref BuildSpecPath
+
+  # IAM role for CodeBuild
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Permissions for CloudWatch Logs
+              - Effect: Allow
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*:*"
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+              # Permissions for S3 actions
+              - Effect: Allow
+                Resource: !Sub "arn:aws:s3:::${PipelineArtifactBucket}/*"
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:ListBucket
+                  - s3:GetBucketVersioning
+              # Permissions for CodeBuild reports
+              - Effect: Allow
+                Resource:
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/my-codebuild-project-*"
+                Action:
+                  - codebuild:CreateReportGroup
+                  - codebuild:CreateReport
+                  - codebuild:UpdateReport
+                  - codebuild:BatchPutTestCases
+                  - codebuild:BatchPutCodeCoverages
+              # Permissions for ECR actions
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: "*"
+
+  # IAM role for CloudFormation
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudFormationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Permissions for various AWS services used by CloudFormation
+              - Effect: Allow
+                Action:
+                  - ec2:*
+                  - ecs:*
+                  - elasticloadbalancing:*
+                  - rds:*
+                  - secretsmanager:*
+                  - autoscaling:*
+                  - route53:*
+                  - logs:*
+                  - iam:PassRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:TagRole
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:CreateInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:AddRoleToInstanceProfile
+                  - iam:GetRole
+                Resource: '*'
